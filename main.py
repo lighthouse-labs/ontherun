@@ -31,6 +31,7 @@ import sys
 from os import listdir
 from os.path import isfile, join
 from pygame import mixer
+import asyncio
 
 clock = pygame.time.Clock()
 pygame.init()
@@ -45,6 +46,11 @@ POLICE_VEL = 4
 
 
 window = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
+game_over = False
+game_won = False
+main_menu = True
+running = True
+play_game = False
 
 # define font for the text
 font = pygame.font.SysFont("Arial", 24)
@@ -245,6 +251,38 @@ class Player(pygame.sprite.Sprite): #inheriting from sprite for pixel accurate c
     def hit_head(self):
         # self.count = 0 dunno what this does?
         self.y_vel *= -1 #creating bounce back effect
+    
+    def reset(self, x, y):
+        self.rect.x = x
+        self.rect.y = y
+        self.x_vel = 0
+        self.y_vel = 0
+        self.direction = "right"
+        self.animation_count = 0
+        #for gravity
+        self.fall_count = 0
+        #for jumping
+        self.jump_count = 0
+        #for hitting fire
+        self.hit = False
+        self.hit_count = 0
+        #lives
+        self.lives = 2
+        #bullets
+        self.bullets = 5
+        #collectibles
+        self.add_speed = False
+        self.add_speed_count = 0
+
+        #score
+        self.score = 0
+
+        self.decrease_speed = False
+        self.decrease_speed_count = 0
+        #level
+        self.level = 1
+
+
 
 
     def update_sprite(self):
@@ -331,6 +369,20 @@ class Police(pygame.sprite.Sprite):
         # Move along this normalized vector towards the player at current speed.
         self.move(self.x_vel, self.y_vel)
         # self.move(dx * 0.05, self.y_vel)
+
+    def reset(self, x, y):
+        self.rect.x = x
+        self.rect.y = y
+        self.x_vel = 0
+        self.y_vel = 0
+        self.direction = "right"
+        self.animation_count = 0
+        #for gravity
+        self.fall_count = 0
+        #for hitting fire
+        self.hit = False
+        self.hit_count = 0
+
 
     def loop(self, fps, player): #looping for each frame
         self.y_vel += min(1, (self.fall_count / fps) * self.GRAVITY)
@@ -651,6 +703,31 @@ class Pineapple(Object):
         if self.animation_count // self.ANIMATION_DELAY > len(sprites):
             self.animation_count = 0
 
+
+class Button(pygame.sprite.Sprite):
+	def __init__(self, img, scale, x, y):
+		super(Button, self).__init__()
+
+		self.image = pygame.transform.scale(img, scale)
+		self.rect = self.image.get_rect()
+		self.rect.x = x
+		self.rect.y = y
+
+		self.clicked = False
+
+	def draw(self, win):
+		action = False
+		pos = pygame.mouse.get_pos()
+		if self.rect.collidepoint(pos):
+			if pygame.mouse.get_pressed()[0] and not self.clicked:
+				action = True
+				self.clicked = True
+
+			if not pygame.mouse.get_pressed()[0]:
+				self.clicked = False
+
+		win.blit(self.image, self.rect)
+		return action
 ########################################################
 
 ##################### START/END ######################
@@ -777,32 +854,32 @@ def handle_police_move(police, objects, player, bullets):
             return obj
             
 
-def game_over(window):
-    font = pygame.font.SysFont("Arial", 32)
+# def game_over(window):
+#     font = pygame.font.SysFont("Arial", 32)
     
-    text_surface = font.render("GAME OVER", True, (255, 0, 0))
-    text_rect = text_surface.get_rect(center=(WIN_WIDTH // 2, WIN_HEIGHT // 2 - 20))
+#     text_surface = font.render("GAME OVER", True, (255, 0, 0))
+#     text_rect = text_surface.get_rect(center=(WIN_WIDTH // 2, WIN_HEIGHT // 2 - 20))
 
-    restart_text = font.render("Press R to restart", True, (255, 255, 255))
-    restart_rect = restart_text.get_rect(center=(WIN_WIDTH // 2, WIN_HEIGHT // 2 + 20))
+#     restart_text = font.render("Press R to restart", True, (255, 255, 255))
+#     restart_rect = restart_text.get_rect(center=(WIN_WIDTH // 2, WIN_HEIGHT // 2 + 20))
 
-    while True:
-        # blit the text surfaces on the screen
-        window.blit(text_surface, text_rect)
-        window.blit(restart_text, restart_rect)
-        # add a delay before showing the game over screen
-        pygame.time.delay(500)
-        # update the displaye to show the new text
-        pygame.display.update()
+#     while True:
+#         # blit the text surfaces on the screen
+#         window.blit(text_surface, text_rect)
+#         window.blit(restart_text, restart_rect)
+#         # add a delay before showing the game over screen
+#         pygame.time.delay(500)
+#         # update the displaye to show the new text
+#         pygame.display.update()
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-              pygame.quit()
-              quit()
+#         for event in pygame.event.get():
+#             if event.type == pygame.QUIT:
+#               pygame.quit()
+#               quit()
 
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_r:
-                  return True
+#             elif event.type == pygame.KEYDOWN:
+#                 if event.key == pygame.K_r:
+#                   return True
 
 
 def level_transition(window, player):
@@ -1406,7 +1483,8 @@ def level_design(block_size):
 
 
 
-def main_game(window): 
+async def main(window): 
+    global game_over, main_menu, game_won, running
     
     block_size = 96
 
@@ -1436,161 +1514,186 @@ def main_game(window):
     #vertical scroll
     offset_y = 0
     scroll_area_height = 320
-    run = True
-    level_transition(window, player)
-    while run:
+    
+    play = pygame.image.load('imgs/play.png')
+    replay = pygame.image.load('imgs/replay.png')
+    play_btn = Button(play, (128, 64), WIN_WIDTH // 2 - WIN_WIDTH // 16, WIN_HEIGHT // 2)
+    replay_btn = Button(replay, (45, 42), WIN_WIDTH // 2 , WIN_HEIGHT // 2 + 20)
+    # level_transition(window, player)
+
+    while running:
         clock.tick(FPS) #running 60 frame/second
 
-        if player.level < len(all_objects):
-            objects = all_objects[player.level]
-            collectibles = all_collectibles[player.level]
-            destination = all_destinations[player.level]
+        #main menu
+        if main_menu:
+            window.blit(BG_IMG, (0,0))
+            play_game = play_btn.draw(window)
+            if play_game:
+                main_menu = False
+                game_over = False
+                game_won = False
 
-            #monster
-            for obj in objects:
-                if obj.name == "monster" or obj.name == "fire":
-                    obj.loop()
         else:
-            #you win screen
-            objects = []
-            collectibles = []
-            destination = all_destinations[1]
+            if not game_over:
+                if player.level < len(all_objects):
+                    objects = all_objects[player.level]
+                    collectibles = all_collectibles[player.level]
+                    destination = all_destinations[player.level]
 
-        if player.lives <= 0:
-          # game over
-          game_over_sound.play()
-          if game_over(window):
-            main_game(window)
-          else:
-            # exit the loop
-            run = False
-            break
+                    #monster
+                    for obj in objects:
+                        if obj.name == "monster" or obj.name == "fire":
+                            obj.loop()
+                else:
+                    #you win screen
+                    objects = []
+                    collectibles = []
+                    destination = all_destinations[1]
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                run = False
-                break
+                if player.lives <= 0:
+                    # game over
+                    game_over_sound.play()
+                    game_over =  True
+                    
+                # else:
+                #     # exit the loop
+                #     running = False
+                #     break
 
-            if event.type == pygame.KEYDOWN: #not putting in handle_move since for that u can hold down  key and continue movement
-                if event.key == pygame.K_SPACE and player.jump_count < 2:
-                    #resetting jump_count on landing, once landed, we can jump again
-                    player.jump()
-                elif event.key == pygame.K_s:
-                    if player.direction == "left":
-                        facing = -1
-                    else:
-                        facing = 1
-                        
-                    if player.bullets > 0: #only 5 bullets
-                        bullets.append(Projectile(round(player.rect.x + player.rect.width //2), round(player.rect.y + player.rect.height//2), 6, 6, facing))
-                        player.bullets -= 1
-                elif event.key == pygame.K_ESCAPE:
-                    run = False
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        running = False
+                        break
 
-        for bullet in bullets:
-                bullet.x += bullet.vel
-                bullet.loop(FPS)
-        
-        #collectibles detection
-        for collectible in collectibles:
-            collectible.loop()
-            if player.rect.colliderect(collectible.rect):
-                collectibles.remove(collectible)
-                collect_item_sound.play()
-                if collectible.name == "heart":
-                    player.lives += 1
-                elif collectible.name == "speed":
-                    player.add_speed = True
-                elif collectible.name == "collectibles_bullets":
-                    player.bullets += 3
-                elif collectible.name == "pineapple":
-                    player.score += 1
+                    if event.type == pygame.KEYDOWN: #not putting in handle_move since for that u can hold down  key and continue movement
+                        if event.key == pygame.K_SPACE and player.jump_count < 2:
+                            #resetting jump_count on landing, once landed, we can jump again
+                            player.jump()
+                        elif event.key == pygame.K_s:
+                            if player.direction == "left":
+                                facing = -1
+                            else:
+                                facing = 1
+                                
+                            if player.bullets > 0: #only 5 bullets
+                                bullets.append(Projectile(round(player.rect.x + player.rect.width //2), round(player.rect.y + player.rect.height//2), 6, 6, facing))
+                                player.bullets -= 1
+                        elif event.key == pygame.K_ESCAPE:
+                            running = False
+
+                for bullet in bullets:
+                        bullet.x += bullet.vel
+                        bullet.loop(FPS)
                 
+                #collectibles detection
+                for collectible in collectibles:
+                    collectible.loop()
+                    if player.rect.colliderect(collectible.rect):
+                        collectibles.remove(collectible)
+                        collect_item_sound.play()
+                        if collectible.name == "heart":
+                            player.lives += 1
+                        elif collectible.name == "speed":
+                            player.add_speed = True
+                        elif collectible.name == "collectibles_bullets":
+                            player.bullets += 3
+                        elif collectible.name == "pineapple":
+                            player.score += 1
+                        
 
-        #level up: destination detection
-        if player.rect.x > destination.rect.right and player.rect.bottom - 128 <= destination.rect.y:
-            pygame.time.wait(500)
-            player.level += 1
-            offset_x = 0
-            offset_y = 0
+                #level up: destination detection
+                if player.rect.x > destination.rect.right and player.rect.bottom - 128 <= destination.rect.y:
+                    pygame.time.wait(500)
+                    player.level += 1
+                    offset_x = 0
+                    offset_y = 0
 
-            #reset player position
-            player.rect.x = 0
-            player.rect.y = WIN_HEIGHT - block_size * 4
-            #reset police position
-            police.rect.x = -200
-            police.rect.y = 500
+                    #reset player position
+                    player.rect.x = 0
+                    player.rect.y = WIN_HEIGHT - block_size * 4
+                    #reset police position
+                    police.rect.x = -200
+                    police.rect.y = 500
 
-            if player.level <= 3:
-                level_transition(window, player)
-            else:
-                ending_screen(window, player)
-
-
-        player.loop(FPS)
-        police.loop(FPS, player)
-
-        handle_move(player, objects)
-        collided_bullet = handle_police_move(police, objects, player, bullets)
-        #make bullet disappear after collision
-        if collided_bullet:
-            bullets.remove(collided_bullet)
-        draw(window, player, objects, offset_x, offset_y, police, bullets, collectibles, destination)
-
-        if ((player.rect.right - offset_x >= WIN_WIDTH - scroll_area_width) and player.x_vel > 0) or (#moving to the right, off the screen
-            (player.rect.left - offset_x <= scroll_area_width) and player.x_vel < 0): #moving to the left, off the screen
-            offset_x += player.x_vel
-
-        #vertical scroll
-        if player.level == 2 and (((player.rect.bottom - offset_y >= WIN_HEIGHT - block_size + 5) and player.y_vel > 0) or (#moving downwards, off the screen
-            (player.rect.top - offset_y <= scroll_area_height) and player.y_vel < 0)): #moving upwards, off the screen
-            offset_y += player.y_vel
-        elif (((player.rect.bottom - offset_y >= WIN_HEIGHT - 87) and player.y_vel > 0) or (#moving downwards, off the screen
-            (player.rect.top - offset_y <= 15) and player.y_vel < 0)):
-            offset_y += player.y_vel
+                    if player.level <= 3:
+                        level_transition(window, player)
+                    else:
+                        ending_screen(window, player)
 
 
+                player.loop(FPS)
+                police.loop(FPS, player)
+
+                handle_move(player, objects)
+                collided_bullet = handle_police_move(police, objects, player, bullets)
+                #make bullet disappear after collision
+                if collided_bullet:
+                    bullets.remove(collided_bullet)
+                draw(window, player, objects, offset_x, offset_y, police, bullets, collectibles, destination)
+
+                if ((player.rect.right - offset_x >= WIN_WIDTH - scroll_area_width) and player.x_vel > 0) or (#moving to the right, off the screen
+                    (player.rect.left - offset_x <= scroll_area_width) and player.x_vel < 0): #moving to the left, off the screen
+                    offset_x += player.x_vel
+
+                #vertical scroll
+                if player.level == 2 and (((player.rect.bottom - offset_y >= WIN_HEIGHT - block_size + 5) and player.y_vel > 0) or (#moving downwards, off the screen
+                    (player.rect.top - offset_y <= scroll_area_height) and player.y_vel < 0)): #moving upwards, off the screen
+                    offset_y += player.y_vel
+                elif (((player.rect.bottom - offset_y >= WIN_HEIGHT - 87) and player.y_vel > 0) or (#moving downwards, off the screen
+                    (player.rect.top - offset_y <= 15) and player.y_vel < 0)):
+                    offset_y += player.y_vel
+
+            #gameover condition
+            if game_over:
+                replay = replay_btn.draw(window)
+                if replay:
+                    player.reset(block_size * 3, WIN_HEIGHT - block_size * 4, 50, 50)
+                    police.reset(-200, 500, 50, 50)
+                    offset_x = 0
+                    offset_y = 0
+        pygame.display.update()
+        await asyncio.sleep(0)
     pygame.quit()
     quit()
 
 
-def main(window):
-    while True:
-        window.blit(BG_IMG, (0,0))
-        # instruction_image = pygame.image.load("keys.png").convert_alpha()
-        # window.blit(instruction_image, (10, 100))
+# def main(window):
+#     while True:
+#         window.blit(BG_IMG, (0,0))
+#         # instruction_image = pygame.image.load("keys.png").convert_alpha()
+#         # window.blit(instruction_image, (10, 100))
 
-        # Set up the font
-        font = pygame.font.Font(None, 36)
+#         # Set up the font
+#         font = pygame.font.Font(None, 36)
 
 
-        mx, my = pygame.mouse.get_pos()
-        button_1 = pygame.Rect(400, 590, 200, 50)
-        # draw button rectangle
-        pygame.draw.rect(window, (255, 255, 255), button_1)
+#         mx, my = pygame.mouse.get_pos()
+#         button_1 = pygame.Rect(400, 590, 200, 50)
+#         # draw button rectangle
+#         pygame.draw.rect(window, (255, 255, 255), button_1)
 
-        text_surface = font.render("Start Game", True, (0, 0, 0))
-        text_rect = text_surface.get_rect(center=button_1.center)
-        window.blit(text_surface, text_rect)
+#         text_surface = font.render("Start Game", True, (0, 0, 0))
+#         text_rect = text_surface.get_rect(center=button_1.center)
+#         window.blit(text_surface, text_rect)
 
-        if button_1.collidepoint((mx, my)):
-            if click:
-                main_game(window)
+#         if button_1.collidepoint((mx, my)):
+#             if click:
+#                 main_game(window)
         
-        pygame.display.update()
+#         pygame.display.update()
 
-        click = False
+#         click = False
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:
-                    click = True
+#         for event in pygame.event.get():
+#             if event.type == pygame.QUIT:
+#                 pygame.quit()
+#                 sys.exit()
+#             if event.type == pygame.MOUSEBUTTONDOWN:
+#                 if event.button == 1:
+#                     click = True
                     
-        pygame.display.update()
+#         pygame.display.update()
 
 
 if __name__ == "__main__":
-    main(window)
+    asyncio.run(main(window))
